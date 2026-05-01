@@ -28,7 +28,7 @@ jobs:
             pandas \
             shapely
 
-      - name: Ejecutar fetch_wind_data.py
+      - name: Ejecutar script
         run: python fetch_wind_data.py
 
       - name: Commit y push del CSV
