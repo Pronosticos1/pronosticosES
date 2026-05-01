@@ -18,17 +18,15 @@ import pandas as pd
 import openmeteo_requests
 import requests_cache
 from retry_requests import retry
-from shapely.geometry import Point
 
 # ─────────────────────────────────────────────
 # CONFIGURACIÓN DEL ÁREA (centroide + radio)
 # ─────────────────────────────────────────────
-CENTROID_LAT = 13.50       # ← ajusta al centroide real de tu polígono
-CENTROID_LON = -89.20      # ← ajusta al centroide real de tu polígono
-RADIO_KM     = 10.0        # radio en kilómetros
-GRID_STEP_KM = 4.0         # separación entre puntos de muestreo (~4 km)
+CENTROID_LAT = 13.50
+CENTROID_LON = -89.20
+RADIO_KM     = 10.0
+GRID_STEP_KM = 4.0
 
-# Convertir radio/step a grados (aprox.)
 RAD_DEG  = RADIO_KM  / 111.0
 STEP_DEG = GRID_STEP_KM / 111.0
 
@@ -53,6 +51,65 @@ for lat in lats:
             points.append((lat, lon))
 
 print(f"Puntos de muestreo dentro del área: {len(points)}")
+
+# ─────────────────────────────────────────────
+# FUNCIONES DE DIRECCIÓN
+# ─────────────────────────────────────────────
+def grados_a_punto_cardinal_simple(grados):
+    """8 puntos cardinales: N, NE, E, SE, S, SO, O, NO"""
+    if pd.isna(grados):
+        return "Sin datos"
+    grados = grados % 360
+    puntos = [
+        (  0.0,  22.5, "Norte"),
+        ( 22.5,  67.5, "Noreste"),
+        ( 67.5, 112.5, "Este"),
+        (112.5, 157.5, "Sureste"),
+        (157.5, 202.5, "Sur"),
+        (202.5, 247.5, "Suroeste"),
+        (247.5, 292.5, "Oeste"),
+        (292.5, 337.5, "Noroeste"),
+        (337.5, 360.0, "Norte"),
+    ]
+    for inicio, fin, nombre in puntos:
+        if inicio <= grados < fin:
+            return nombre
+    return "Norte"
+
+def grados_a_punto_cardinal_detalle(grados):
+    """16 puntos cardinales detallados"""
+    if pd.isna(grados):
+        return "Sin datos"
+    grados = grados % 360
+    puntos = [
+        (  0.00,  11.25, "Norte"),
+        ( 11.25,  33.75, "Nornoreste"),
+        ( 33.75,  56.25, "Noreste"),
+        ( 56.25,  78.75, "Estenoreste"),
+        ( 78.75, 101.25, "Este"),
+        (101.25, 123.75, "Estesureste"),
+        (123.75, 146.25, "Sureste"),
+        (146.25, 168.75, "Sursureste"),
+        (168.75, 191.25, "Sur"),
+        (191.25, 213.75, "Sursuroeste"),
+        (213.75, 236.25, "Suroeste"),
+        (236.25, 258.75, "Oestesuroeste"),
+        (258.75, 281.25, "Oeste"),
+        (281.25, 303.75, "Oestenoroeste"),
+        (303.75, 326.25, "Noroeste"),
+        (326.25, 348.75, "Nornoreste"),
+        (348.75, 360.00, "Norte"),
+    ]
+    for inicio, fin, nombre in puntos:
+        if inicio <= grados < fin:
+            return nombre
+    return "Norte"
+
+def hacia_donde_va(grados):
+    """Hacia dónde SE DESPLAZA el viento (opuesto a de dónde viene)"""
+    if pd.isna(grados):
+        return "Sin datos"
+    return grados_a_punto_cardinal_simple((grados + 180) % 360)
 
 # ─────────────────────────────────────────────
 # CLIENTE OPEN-METEO
@@ -122,21 +179,33 @@ df_mean = (
 )
 
 # ─────────────────────────────────────────────
-# COLUMNAS EXTRA ÚTILES PARA POWER BI
+# COLUMNAS EXTRA PARA POWER BI
 # ─────────────────────────────────────────────
-df_mean["fecha"]   = df_mean["fecha_hora"].dt.date.astype(str)
-df_mean["hora"]    = df_mean["fecha_hora"].dt.hour
+df_mean["fecha"]      = df_mean["fecha_hora"].dt.date.astype(str)
+df_mean["hora"]       = df_mean["fecha_hora"].dt.hour
 df_mean["dia_semana"] = df_mean["fecha_hora"].dt.day_name()
 
-# Condición de quema según dirección (90°–270° = viento hacia el norte = favorable)
-df_mean["condicion_10m"] = df_mean["wind_direction_10m"].apply(
+# ── Condición de quema ──────────────────────────────────────────
+df_mean["condicion_10m"]  = df_mean["wind_direction_10m"].apply(
     lambda x: "Favorable" if 90 <= x <= 270 else "No favorable"
 )
 df_mean["condicion_100m"] = df_mean["wind_direction_100m"].apply(
     lambda x: "Favorable" if 90 <= x <= 270 else "No favorable"
 )
 
-# Fecha/hora sin timezone (Power BI no maneja bien tz-aware)
+# ── De dónde VIENE el viento (8 puntos) ─────────────────────────
+df_mean["viene_de_10m"]  = df_mean["wind_direction_10m"].apply(grados_a_punto_cardinal_simple)
+df_mean["viene_de_100m"] = df_mean["wind_direction_100m"].apply(grados_a_punto_cardinal_simple)
+
+# ── De dónde VIENE el viento (16 puntos, más detalle) ───────────
+df_mean["viene_de_10m_detalle"]  = df_mean["wind_direction_10m"].apply(grados_a_punto_cardinal_detalle)
+df_mean["viene_de_100m_detalle"] = df_mean["wind_direction_100m"].apply(grados_a_punto_cardinal_detalle)
+
+# ── Hacia dónde VA el viento (8 puntos) ─────────────────────────
+df_mean["va_hacia_10m"]  = df_mean["wind_direction_10m"].apply(hacia_donde_va)
+df_mean["va_hacia_100m"] = df_mean["wind_direction_100m"].apply(hacia_donde_va)
+
+# ── Quitar timezone para Power BI ───────────────────────────────
 df_mean["fecha_hora"] = df_mean["fecha_hora"].dt.tz_localize(None)
 
 # ─────────────────────────────────────────────
