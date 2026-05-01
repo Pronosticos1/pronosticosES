@@ -185,14 +185,6 @@ df_mean["fecha"]      = df_mean["fecha_hora"].dt.date.astype(str)
 df_mean["hora"]       = df_mean["fecha_hora"].dt.hour
 df_mean["dia_semana"] = df_mean["fecha_hora"].dt.day_name()
 
-# ── Condición de quema ──────────────────────────────────────────
-df_mean["condicion_10m"]  = df_mean["wind_direction_10m"].apply(
-    lambda x: "Favorable" if 90 <= x <= 270 else "No favorable"
-)
-df_mean["condicion_100m"] = df_mean["wind_direction_100m"].apply(
-    lambda x: "Favorable" if 90 <= x <= 270 else "No favorable"
-)
-
 # ── De dónde VIENE el viento (8 puntos) ─────────────────────────
 df_mean["viene_de_10m"]  = df_mean["wind_direction_10m"].apply(grados_a_punto_cardinal_simple)
 df_mean["viene_de_100m"] = df_mean["wind_direction_100m"].apply(grados_a_punto_cardinal_simple)
