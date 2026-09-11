@@ -2,25 +2,42 @@ name: Actualizar datos de viento
 
 on:
   schedule:
+    # 06:00 UTC = 00:00 hora de El Salvador
     - cron: '0 6 * * *'
+
+  # Permite ejecutarlo manualmente desde GitHub
   workflow_dispatch:
+
+# Permiso necesario para que GitHub Actions pueda hacer commit y push
+permissions:
+  contents: write
 
 jobs:
   fetch-and-commit:
     runs-on: ubuntu-latest
+
+    env:
+      TZ: America/El_Salvador
+
     defaults:
       run:
         working-directory: Wind_forecasts
 
     steps:
+
+      # 1. Descargar el repositorio
       - name: Checkout repositorio
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # 2. Configurar Python
       - name: Configurar Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
+      # 3. Instalar dependencias
       - name: Instalar dependencias
         run: |
           pip install \
@@ -31,13 +48,51 @@ jobs:
             pandas \
             shapely
 
-      - name: Ejecutar script
-        run: python fetch_wind_data.py
-
-      - name: Commit y push del CSV
+      # 4. Descargar / actualizar el pronóstico
+      - name: Ejecutar script de viento
         run: |
+          python fetch_wind_data.py
+
+      # 5. Crear carpeta histórica con la fecha del día
+      - name: Guardar copia histórica diaria
+        run: |
+          FECHA=$(date +%F)
+
+          CARPETA="data/$FECHA"
+          ARCHIVO="$CARPETA/wind_forecast_$FECHA.csv"
+
+          echo "Fecha de ejecución: $FECHA"
+
+          # Crear carpeta si todavía no existe
+          mkdir -p "$CARPETA"
+
+          # Copiar el archivo actualizado
+          cp data/wind_forecast_latest.csv "$ARCHIVO"
+
+          echo "Archivo histórico creado:"
+          echo "$ARCHIVO"
+
+      # 6. Mostrar estructura para verificar
+      - name: Verificar archivos generados
+        run: |
+          echo "Contenido de data:"
+          find data -maxdepth 2 -type f | sort
+
+      # 7. Guardar cambios en GitHub
+      - name: Commit y push de datos
+        run: |
+          FECHA=$(date +%F)
+
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/wind_forecast_latest.csv
-          git diff --staged --quiet || git commit -m "Auto-update wind forecast"
-          git push
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Agrega tanto latest como el histórico diario
+          git add data/
+
+          # Si no hay cambios, no intenta crear commit
+          if git diff --staged --quiet; then
+            echo "No hay cambios nuevos para guardar."
+          else
+            git commit -m "Auto-update wind forecast $FECHA"
+            git push
+          fi
