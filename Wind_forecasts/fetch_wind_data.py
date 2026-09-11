@@ -1,69 +1,55 @@
 """
 fetch_wind_data.py
 ==================
-Descarga pronóstico de viento (3 días) para el área de Laguna, El Salvador
-y guarda un CSV listo para Power BI.
+Descarga pronóstico de viento (3 días) para EM Central Izalco, El Salvador,
+y guarda un CSV listo para Apps Script / Power BI.
 
-Variables: velocidad y dirección a 10m y 100m
-Modelo: ECMWF IFS vía Open-Meteo API (gratuito)
-Zona: centroide + radio 10 km → malla de puntos → promedio areal
+Variables: velocidad y dirección a 10 m y 100 m
+Modelo: ECMWF IFS vía Open-Meteo API
+Punto de validación: EM Central Izalco
 
-Ejecutar: python fetch_wind_data.py
-Output:   data/wind_forecast_latest.csv
+Output: data/wind_forecast_latest.csv
 """
 
 import os
-import numpy as np
 import pandas as pd
 import openmeteo_requests
 import requests_cache
 from retry_requests import retry
 
 # ─────────────────────────────────────────────
-# CONFIGURACIÓN DEL ÁREA (centroide + radio)
+# UBICACIÓN: EM CENTRAL IZALCO
 # ─────────────────────────────────────────────
-CENTROID_LAT = 13.50
-CENTROID_LON = -89.20
-RADIO_KM     = 10.0
-GRID_STEP_KM = 4.0
+LAT = 13.72133331874404
+LON = -89.71074386732839
 
-RAD_DEG  = RADIO_KM  / 111.0
-STEP_DEG = GRID_STEP_KM / 111.0
+# Si en el futuro quieres usar exactamente la Laguna Facultativa:
+# LAT = 13.71783836415580
+# LON = -89.71062466044499
+
+TIMEZONE = "America/El_Salvador"
 
 # ─────────────────────────────────────────────
 # SALIDA
 # ─────────────────────────────────────────────
-OUTPUT_DIR  = "data"
+OUTPUT_DIR = "data"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "wind_forecast_latest.csv")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# ─────────────────────────────────────────────
-# CONSTRUIR MALLA DE PUNTOS DENTRO DEL CÍRCULO
-# ─────────────────────────────────────────────
-lats = np.arange(CENTROID_LAT - RAD_DEG, CENTROID_LAT + RAD_DEG + STEP_DEG, STEP_DEG)
-lons = np.arange(CENTROID_LON - RAD_DEG, CENTROID_LON + RAD_DEG + STEP_DEG, STEP_DEG)
-
-points = []
-for lat in lats:
-    for lon in lons:
-        dist = np.sqrt(((lat - CENTROID_LAT) * 111) ** 2 + ((lon - CENTROID_LON) * 111) ** 2)
-        if dist <= RADIO_KM:
-            points.append((lat, lon))
-
-print(f"Puntos de muestreo dentro del área: {len(points)}")
 
 # ─────────────────────────────────────────────
 # FUNCIONES DE DIRECCIÓN
 # ─────────────────────────────────────────────
 def grados_a_punto_cardinal_simple(grados):
-    """8 puntos cardinales: N, NE, E, SE, S, SO, O, NO"""
+    """8 puntos cardinales: N, NE, E, SE, S, SO, O, NO."""
     if pd.isna(grados):
         return "Sin datos"
-    grados = grados % 360
+
+    grados = float(grados) % 360
+
     puntos = [
-        (  0.0,  22.5, "Norte"),
-        ( 22.5,  67.5, "Noreste"),
-        ( 67.5, 112.5, "Este"),
+        (0.0, 22.5, "Norte"),
+        (22.5, 67.5, "Noreste"),
+        (67.5, 112.5, "Este"),
         (112.5, 157.5, "Sureste"),
         (157.5, 202.5, "Sur"),
         (202.5, 247.5, "Suroeste"),
@@ -71,22 +57,27 @@ def grados_a_punto_cardinal_simple(grados):
         (292.5, 337.5, "Noroeste"),
         (337.5, 360.0, "Norte"),
     ]
+
     for inicio, fin, nombre in puntos:
         if inicio <= grados < fin:
             return nombre
+
     return "Norte"
 
+
 def grados_a_punto_cardinal_detalle(grados):
-    """16 puntos cardinales detallados"""
+    """16 puntos cardinales detallados."""
     if pd.isna(grados):
         return "Sin datos"
-    grados = grados % 360
+
+    grados = float(grados) % 360
+
     puntos = [
-        (  0.00,  11.25, "Norte"),
-        ( 11.25,  33.75, "Nornoreste"),
-        ( 33.75,  56.25, "Noreste"),
-        ( 56.25,  78.75, "Estenoreste"),
-        ( 78.75, 101.25, "Este"),
+        (0.00, 11.25, "Norte"),
+        (11.25, 33.75, "Nornoreste"),
+        (33.75, 56.25, "Noreste"),
+        (56.25, 78.75, "Estenoreste"),
+        (78.75, 101.25, "Este"),
         (101.25, 123.75, "Estesureste"),
         (123.75, 146.25, "Sureste"),
         (146.25, 168.75, "Sursureste"),
@@ -97,26 +88,42 @@ def grados_a_punto_cardinal_detalle(grados):
         (258.75, 281.25, "Oeste"),
         (281.25, 303.75, "Oestenoroeste"),
         (303.75, 326.25, "Noroeste"),
-        (326.25, 348.75, "Nornoreste"),
+        (326.25, 348.75, "Nornoroeste"),
         (348.75, 360.00, "Norte"),
     ]
+
     for inicio, fin, nombre in puntos:
         if inicio <= grados < fin:
             return nombre
+
     return "Norte"
 
+
 def hacia_donde_va(grados):
-    """Hacia dónde SE DESPLAZA el viento (opuesto a de dónde viene)"""
+    """Hacia dónde se desplaza el viento: 180° opuesto a su procedencia."""
     if pd.isna(grados):
         return "Sin datos"
-    return grados_a_punto_cardinal_simple((grados + 180) % 360)
+
+    return grados_a_punto_cardinal_simple((float(grados) + 180.0) % 360.0)
+
 
 # ─────────────────────────────────────────────
 # CLIENTE OPEN-METEO
 # ─────────────────────────────────────────────
-cache_session  = requests_cache.CachedSession('.cache', expire_after=3600)
-retry_session  = retry(cache_session, retries=5, backoff_factor=0.2)
-openmeteo      = openmeteo_requests.Client(session=retry_session)
+cache_session = requests_cache.CachedSession(
+    ".cache",
+    expire_after=3600
+)
+
+retry_session = retry(
+    cache_session,
+    retries=5,
+    backoff_factor=0.2
+)
+
+openmeteo = openmeteo_requests.Client(
+    session=retry_session
+)
 
 HOURLY_VARS = [
     "wind_speed_10m",
@@ -125,86 +132,122 @@ HOURLY_VARS = [
     "wind_direction_100m",
 ]
 
-# ─────────────────────────────────────────────
-# DESCARGAR DATOS PARA CADA PUNTO
-# ─────────────────────────────────────────────
-all_dfs = []
-
-for i, (lat, lon) in enumerate(points):
-    print(f"  Descargando punto {i+1}/{len(points)}: lat={lat:.3f}, lon={lon:.3f}")
-
-    params = {
-        "latitude":       lat,
-        "longitude":      lon,
-        "hourly":         HOURLY_VARS,
-        "models":         "ecmwf_ifs",
-        "forecast_days":  3,
-        "timezone":       "America/El_Salvador",
-        "windspeed_unit": "kmh",
-    }
-
-    try:
-        responses = openmeteo.weather_api("https://api.open-meteo.com/v1/forecast", params=params)
-        response  = responses[0]
-        hourly    = response.Hourly()
-
-        vals = [hourly.Variables(j).ValuesAsNumpy() for j in range(len(HOURLY_VARS))]
-
-        date_index = pd.date_range(
-            start=pd.to_datetime(hourly.Time(), unit="s", utc=True).tz_convert("America/El_Salvador"),
-            end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True).tz_convert("America/El_Salvador"),
-            freq=pd.Timedelta(seconds=hourly.Interval()),
-            inclusive="left",
-        )
-
-        data = {"fecha_hora": date_index, "lat": lat, "lon": lon}
-        for name, arr in zip(HOURLY_VARS, vals):
-            data[name] = arr
-
-        all_dfs.append(pd.DataFrame(data))
-
-    except Exception as e:
-        print(f"    ⚠️  Error en punto ({lat}, {lon}): {e}")
-        continue
+params = {
+    "latitude": LAT,
+    "longitude": LON,
+    "hourly": HOURLY_VARS,
+    "models": "ecmwf_ifs",
+    "forecast_days": 3,
+    "timezone": TIMEZONE,
+    "wind_speed_unit": "kmh",
+    "cell_selection": "nearest",
+}
 
 # ─────────────────────────────────────────────
-# PROMEDIO AREAL POR HORA
+# DESCARGAR PRONÓSTICO
 # ─────────────────────────────────────────────
-df_all  = pd.concat(all_dfs, ignore_index=True)
-df_mean = (
-    df_all
-    .groupby("fecha_hora")[HOURLY_VARS]
-    .mean()
-    .reset_index()
+print("Descargando pronóstico para EM Central Izalco...")
+print(f"Coordenada solicitada: {LAT:.6f}, {LON:.6f}")
+
+responses = openmeteo.weather_api(
+    "https://api.open-meteo.com/v1/forecast",
+    params=params
 )
 
+response = responses[0]
+
+print(
+    f"Celda utilizada por Open-Meteo: "
+    f"{response.Latitude():.6f}, {response.Longitude():.6f}"
+)
+print(f"Elevación de la celda: {response.Elevation():.1f} m")
+print(f"Zona horaria: {response.Timezone()}")
+
+hourly = response.Hourly()
+
+# El orden debe coincidir exactamente con HOURLY_VARS.
+vals = [
+    hourly.Variables(i).ValuesAsNumpy()
+    for i in range(len(HOURLY_VARS))
+]
+
+# Open-Meteo devuelve timestamps que convertimos a hora local de El Salvador.
+date_index = pd.date_range(
+    start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
+    end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
+    freq=pd.Timedelta(seconds=hourly.Interval()),
+    inclusive="left",
+).tz_convert(TIMEZONE)
+
+data = {
+    "fecha_hora": date_index
+}
+
+for name, arr in zip(HOURLY_VARS, vals):
+    data[name] = arr
+
+df = pd.DataFrame(data)
+
 # ─────────────────────────────────────────────
-# COLUMNAS EXTRA PARA POWER BI
+# COLUMNAS EXTRA
 # ─────────────────────────────────────────────
-df_mean["fecha"]      = df_mean["fecha_hora"].dt.date.astype(str)
-df_mean["hora"]       = df_mean["fecha_hora"].dt.hour
-df_mean["dia_semana"] = df_mean["fecha_hora"].dt.day_name()
+df["fecha"] = df["fecha_hora"].dt.date.astype(str)
+df["hora"] = df["fecha_hora"].dt.hour
+df["dia_semana"] = df["fecha_hora"].dt.day_name()
 
-# ── De dónde VIENE el viento (8 puntos) ─────────────────────────
-df_mean["viene_de_10m"]  = df_mean["wind_direction_10m"].apply(grados_a_punto_cardinal_simple)
-df_mean["viene_de_100m"] = df_mean["wind_direction_100m"].apply(grados_a_punto_cardinal_simple)
+# De dónde VIENE el viento
+df["viene_de_10m"] = df["wind_direction_10m"].apply(
+    grados_a_punto_cardinal_simple
+)
+df["viene_de_100m"] = df["wind_direction_100m"].apply(
+    grados_a_punto_cardinal_simple
+)
 
-# ── De dónde VIENE el viento (16 puntos, más detalle) ───────────
-df_mean["viene_de_10m_detalle"]  = df_mean["wind_direction_10m"].apply(grados_a_punto_cardinal_detalle)
-df_mean["viene_de_100m_detalle"] = df_mean["wind_direction_100m"].apply(grados_a_punto_cardinal_detalle)
+# Dirección detallada
+df["viene_de_10m_detalle"] = df["wind_direction_10m"].apply(
+    grados_a_punto_cardinal_detalle
+)
+df["viene_de_100m_detalle"] = df["wind_direction_100m"].apply(
+    grados_a_punto_cardinal_detalle
+)
 
-# ── Hacia dónde VA el viento (8 puntos) ─────────────────────────
-df_mean["va_hacia_10m"]  = df_mean["wind_direction_10m"].apply(hacia_donde_va)
-df_mean["va_hacia_100m"] = df_mean["wind_direction_100m"].apply(hacia_donde_va)
+# Hacia dónde VA el viento
+df["va_hacia_10m"] = df["wind_direction_10m"].apply(
+    hacia_donde_va
+)
+df["va_hacia_100m"] = df["wind_direction_100m"].apply(
+    hacia_donde_va
+)
 
-# ── Quitar timezone para Power BI ───────────────────────────────
-df_mean["fecha_hora"] = df_mean["fecha_hora"].dt.tz_localize(None)
+# Quitar timezone para mantener compatibilidad con el CSV actual
+df["fecha_hora"] = df["fecha_hora"].dt.tz_localize(None)
 
 # ─────────────────────────────────────────────
 # GUARDAR CSV
 # ─────────────────────────────────────────────
-df_mean.to_csv(OUTPUT_FILE, index=False, encoding="utf-8")
+df.to_csv(
+    OUTPUT_FILE,
+    index=False,
+    encoding="utf-8"
+)
 
 print(f"\n✅ CSV guardado en: {OUTPUT_FILE}")
-print(f"   Filas: {len(df_mean)}  |  Columnas: {list(df_mean.columns)}")
-print(f"   Período: {df_mean['fecha_hora'].min()} → {df_mean['fecha_hora'].max()}")
+print(f"   Filas: {len(df)}")
+print(f"   Columnas: {list(df.columns)}")
+print(
+    f"   Período: "
+    f"{df['fecha_hora'].min()} → {df['fecha_hora'].max()}"
+)
+
+print("\nPrimeras filas:")
+print(
+    df[
+        [
+            "fecha_hora",
+            "wind_speed_10m",
+            "wind_direction_10m",
+            "viene_de_10m",
+            "va_hacia_10m",
+        ]
+    ].head(8).to_string(index=False)
+)
