@@ -1,0 +1,88 @@
+name: Actualizar modelos de validación
+
+on:
+  schedule:
+    # 06:20 UTC = 00:20 hora de El Salvador.
+    # Se ejecuta después del pronóstico operativo de main (06:00 UTC).
+    - cron: '20 6 * * *'
+
+  # Permite ejecutar los cuatro modelos manualmente desde GitHub Actions.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: validation-models-daily
+  cancel-in-progress: false
+
+jobs:
+  update-validation-models:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ECMWF land
+            branch: validation/ecmwf-land
+            script: validation/fetch_ecmwf_land.py
+            folder: ecmwf_land
+          - name: Best Match
+            branch: validation/best-match
+            script: validation/fetch_best_match.py
+            folder: best_match
+          - name: GFS
+            branch: validation/gfs
+            script: validation/fetch_gfs.py
+            folder: gfs
+          - name: ICON
+            branch: validation/icon
+            script: validation/fetch_icon.py
+            folder: icon
+
+    env:
+      TZ: America/El_Salvador
+
+    steps:
+      - name: Checkout rama del modelo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
+          fetch-depth: 0
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: |
+          pip install \
+            openmeteo-requests \
+            requests-cache \
+            retry-requests \
+            numpy \
+            pandas
+        working-directory: Wind_forecasts
+
+      - name: Descargar pronóstico de validación
+        run: python ${{ matrix.script }}
+        working-directory: Wind_forecasts
+
+      - name: Guardar latest e histórico diario
+        run: |
+          FECHA=$(date +%F)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "Wind_forecasts/data/validation/${{ matrix.folder }}/"
+
+          if git diff --staged --quiet; then
+            echo "No hay cambios nuevos para ${{ matrix.name }}."
+          else
+            git commit -m "Auto-update validation ${{ matrix.name }} $FECHA"
+            git push origin "HEAD:${{ matrix.branch }}"
+          fi
