@@ -1,6 +1,12 @@
 name: Actualizar modelos de validación
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/update_validation_models.yml'
+
   schedule:
     # 06:20 UTC = 00:20 hora de El Salvador.
     # Se ejecuta después del pronóstico operativo de main (06:00 UTC).
