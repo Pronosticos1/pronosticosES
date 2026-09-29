@@ -92,3 +92,82 @@ jobs:
             git commit -m "Auto-update validation ${{ matrix.name }} $FECHA"
             git push origin "HEAD:${{ matrix.branch }}"
           fi
+
+  consolidate-all-models:
+    name: Consolidar y preparar descarga
+    needs: update-validation-models
+    runs-on: ubuntu-latest
+    env:
+      TZ: America/El_Salvador
+
+    steps:
+      - name: Checkout rama consolidada
+        uses: actions/checkout@v4
+        with:
+          ref: validation/all-models
+          fetch-depth: 0
+
+      - name: Obtener ramas actualizadas
+        run: |
+          git fetch origin \
+            main \
+            validation/ecmwf-land \
+            validation/best-match \
+            validation/gfs \
+            validation/icon \
+            validation/all-models
+
+      - name: Reunir toda la información
+        run: |
+          rm -rf All_model_data
+          mkdir -p \
+            All_model_data/ecmwf_actual \
+            All_model_data/ecmwf_land \
+            All_model_data/best_match \
+            All_model_data/gfs \
+            All_model_data/icon
+
+          TMPDIR=$(mktemp -d)
+          mkdir -p "$TMPDIR/main" "$TMPDIR/ecmwf" "$TMPDIR/best" "$TMPDIR/gfs" "$TMPDIR/icon"
+
+          git archive origin/main Wind_forecasts/data | tar -x -C "$TMPDIR/main"
+          cp -a "$TMPDIR/main/Wind_forecasts/data/." All_model_data/ecmwf_actual/
+
+          git archive origin/validation/ecmwf-land Wind_forecasts/data/validation/ecmwf_land | tar -x -C "$TMPDIR/ecmwf"
+          cp -a "$TMPDIR/ecmwf/Wind_forecasts/data/validation/ecmwf_land/." All_model_data/ecmwf_land/
+
+          git archive origin/validation/best-match Wind_forecasts/data/validation/best_match | tar -x -C "$TMPDIR/best"
+          cp -a "$TMPDIR/best/Wind_forecasts/data/validation/best_match/." All_model_data/best_match/
+
+          git archive origin/validation/gfs Wind_forecasts/data/validation/gfs | tar -x -C "$TMPDIR/gfs"
+          cp -a "$TMPDIR/gfs/Wind_forecasts/data/validation/gfs/." All_model_data/gfs/
+
+          git archive origin/validation/icon Wind_forecasts/data/validation/icon | tar -x -C "$TMPDIR/icon"
+          cp -a "$TMPDIR/icon/Wind_forecasts/data/validation/icon/." All_model_data/icon/
+
+          rm -rf "$TMPDIR"
+
+      - name: Guardar consolidado en GitHub
+        run: |
+          FECHA=$(date +%F)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A All_model_data/
+
+          if git diff --staged --quiet; then
+            echo "El consolidado ya está actualizado."
+          else
+            git commit -m "Update all model data $FECHA"
+            git push origin HEAD:validation/all-models
+          fi
+
+      - name: Crear descarga única ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: todos-los-pronosticos
+          path: All_model_data/
+          if-no-files-found: error
+          retention-days: 90
+
